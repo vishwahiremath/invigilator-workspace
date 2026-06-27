@@ -1,0 +1,10 @@
+{
+  "name": "@vishwahiremath/invigilator",
+  "version": "1.0.0",
+  "description": "Client-side proctoring SDK using Web Workers and MediaPipe",
+  "type": "module",
+  "main": "src/index.js",
+  "keywords": ["proctoring", "webrtc", "tensorflow", "mediapipe", "education", "onlineExam"],
+  "author": "Vishwahiremath",
+  "license": "MIT"
+}
