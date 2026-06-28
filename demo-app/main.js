@@ -6,7 +6,7 @@
  * and drives the telemetry display.
  */
 
-import { InvigilatorEngine } from "@vishwahiremath/invigilator";
+import { InvigilatorEngine } from "invigilator";
 
 /* ---------- DOM refs ---------- */
 const startBtn = document.getElementById("start-btn");

@@ -1,5 +1,5 @@
 {
-  "name": "@vishwahiremath/invigilator",
+  "name": "invigilator",
   "version": "1.0.0",
   "description": "Client-side proctoring SDK using Web Workers and MediaPipe",
   "type": "module",

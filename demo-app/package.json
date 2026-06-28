@@ -7,7 +7,7 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@vishwahiremath/invigilator": "*"
+    "invigilator": "*"
   },
   "devDependencies": {
     "vite": "^5.0.0"
