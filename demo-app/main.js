@@ -6,31 +6,31 @@
  * and drives the telemetry display.
  */
 
-import { InvigilatorEngine } from '@mycompany/invigilator';
+import { InvigilatorEngine } from "@vishwahiremath/invigilator";
 
 /* ---------- DOM refs ---------- */
-const startBtn     = document.getElementById('start-btn');
-const stopBtn      = document.getElementById('stop-btn');
-const videoEl      = document.getElementById('webcam');
-const canvasEl     = document.getElementById('frame-canvas');
-const logContainer = document.getElementById('log-container');
-const videoWrapper = document.getElementById('video-wrapper');
+const startBtn = document.getElementById("start-btn");
+const stopBtn = document.getElementById("stop-btn");
+const videoEl = document.getElementById("webcam");
+const canvasEl = document.getElementById("frame-canvas");
+const logContainer = document.getElementById("log-container");
+const videoWrapper = document.getElementById("video-wrapper");
 
 /* Badges */
-const badgeFace      = document.getElementById('badge-face');
-const badgeHead      = document.getElementById('badge-head');
-const badgeEyes      = document.getElementById('badge-eyes');
-const badgeVertical  = document.getElementById('badge-vertical');
-const badgeMultiface = document.getElementById('badge-multiface');
-const badgeCount     = document.getElementById('badge-count');
-const badgeAway      = document.getElementById('badge-away');
-const badgeCheating  = document.getElementById('badge-cheating');
+const badgeFace = document.getElementById("badge-face");
+const badgeHead = document.getElementById("badge-head");
+const badgeEyes = document.getElementById("badge-eyes");
+const badgeVertical = document.getElementById("badge-vertical");
+const badgeMultiface = document.getElementById("badge-multiface");
+const badgeCount = document.getElementById("badge-count");
+const badgeAway = document.getElementById("badge-away");
+const badgeCheating = document.getElementById("badge-cheating");
 
 /* Config inputs */
-const inputFacesLimit  = document.getElementById('input-faces-limit');
-const inputFastLoop    = document.getElementById('input-fast-loop');
-const inputSlowLoop    = document.getElementById('input-slow-loop');
-const inputAwayTimeout = document.getElementById('input-away-timeout');
+const inputFacesLimit = document.getElementById("input-faces-limit");
+const inputFastLoop = document.getElementById("input-fast-loop");
+const inputSlowLoop = document.getElementById("input-slow-loop");
+const inputAwayTimeout = document.getElementById("input-away-timeout");
 
 /* ---------- State ---------- */
 let engine = null;
@@ -39,18 +39,18 @@ let webcamStream = null;
 /* ---------- Helpers ---------- */
 
 function timestamp() {
-  return new Date().toLocaleTimeString('en-GB', { hour12: false });
+  return new Date().toLocaleTimeString("en-GB", { hour12: false });
 }
 
-function appendLog(message, level = 'info') {
+function appendLog(message, level = "info") {
   const colors = {
-    info:  'text-gray-500',
-    good:  'text-green-600',
-    warn:  'text-yellow-600',
-    alert: 'text-red-600',
+    info: "text-gray-500",
+    good: "text-green-600",
+    warn: "text-yellow-600",
+    alert: "text-red-600",
   };
 
-  const entry = document.createElement('div');
+  const entry = document.createElement("div");
   entry.className = colors[level] || colors.info;
   entry.textContent = `[${timestamp()}] ${message}`;
   logContainer.appendChild(entry);
@@ -69,12 +69,12 @@ function appendLog(message, level = 'info') {
  */
 function setBadge(el, text, variant) {
   const styles = {
-    idle:    'bg-gray-100 text-gray-400',
-    good:    'bg-green-50 text-green-700',
-    warn:    'bg-yellow-50 text-yellow-700',
-    alert:   'bg-red-50 text-red-700 badge-pulse',
-    info:    'bg-blue-50 text-blue-700',
-    neutral: 'bg-purple-50 text-purple-700',
+    idle: "bg-gray-100 text-gray-400",
+    good: "bg-green-50 text-green-700",
+    warn: "bg-yellow-50 text-yellow-700",
+    alert: "bg-red-50 text-red-700 badge-pulse",
+    info: "bg-blue-50 text-blue-700",
+    neutral: "bg-purple-50 text-purple-700",
   };
 
   el.className = `status-badge inline-block px-2 py-0.5 rounded text-xs font-medium ${styles[variant] || styles.idle}`;
@@ -92,97 +92,111 @@ let lastMultiFace = null;
 let lastCheating = null;
 
 function onTelemetry(data) {
-  const { facePresent, eyesClosed, headPose, verticalHeadPose, facesCount, multipleFacesAlert, cheating, cheatingReason, awayDuration } = data;
+  const {
+    facePresent,
+    eyesClosed,
+    headPose,
+    verticalHeadPose,
+    facesCount,
+    multipleFacesAlert,
+    cheating,
+    cheatingReason,
+    awayDuration,
+  } = data;
 
   /* ---- Face Present ---- */
   if (facePresent) {
-    setBadge(badgeFace, '✓ Detected', 'good');
+    setBadge(badgeFace, "✓ Detected", "good");
   } else {
-    setBadge(badgeFace, '✗ No Face', 'alert');
+    setBadge(badgeFace, "✗ No Face", "alert");
   }
   if (facePresent !== lastFacePresent) {
     appendLog(
-      facePresent ? 'Face detected' : 'Face lost — no face in frame',
-      facePresent ? 'good' : 'alert',
+      facePresent ? "Face detected" : "Face lost — no face in frame",
+      facePresent ? "good" : "alert",
     );
     lastFacePresent = facePresent;
   }
 
   /* ---- Head Pose ---- */
   if (facePresent) {
-    const poseVariant = headPose === 'CENTER' ? 'good' : 'warn';
+    const poseVariant = headPose === "CENTER" ? "good" : "warn";
     const poseLabel =
-      headPose === 'CENTER'       ? '↑ Center'       :
-      headPose === 'TURNED_LEFT'  ? '← Turned Left'  :
-                                    '→ Turned Right';
+      headPose === "CENTER"
+        ? "↑ Center"
+        : headPose === "TURNED_LEFT"
+          ? "← Turned Left"
+          : "→ Turned Right";
     setBadge(badgeHead, poseLabel, poseVariant);
 
     if (headPose !== lastHeadPose) {
       appendLog(
         `Head pose → ${headPose}`,
-        headPose === 'CENTER' ? 'good' : 'warn',
+        headPose === "CENTER" ? "good" : "warn",
       );
       lastHeadPose = headPose;
     }
   } else {
-    setBadge(badgeHead, '— N/A —', 'idle');
+    setBadge(badgeHead, "— N/A —", "idle");
   }
 
   /* ---- Vertical Pose ---- */
   if (facePresent) {
-    const vVariant = verticalHeadPose === 'CENTER' ? 'good' : 'warn';
+    const vVariant = verticalHeadPose === "CENTER" ? "good" : "warn";
     const vLabel =
-      verticalHeadPose === 'CENTER'       ? '— Center'       :
-      verticalHeadPose === 'LOOKING_UP'   ? '↑ Looking Up'   :
-                                            '↓ Looking Down';
+      verticalHeadPose === "CENTER"
+        ? "— Center"
+        : verticalHeadPose === "LOOKING_UP"
+          ? "↑ Looking Up"
+          : "↓ Looking Down";
     setBadge(badgeVertical, vLabel, vVariant);
 
     if (verticalHeadPose !== lastVerticalPose) {
       appendLog(
         `Vertical pose → ${verticalHeadPose}`,
-        verticalHeadPose === 'CENTER' ? 'good' : 'warn',
+        verticalHeadPose === "CENTER" ? "good" : "warn",
       );
       lastVerticalPose = verticalHeadPose;
     }
   } else {
-    setBadge(badgeVertical, '— N/A —', 'idle');
+    setBadge(badgeVertical, "— N/A —", "idle");
   }
 
   /* ---- Eyes ---- */
   if (facePresent) {
     if (eyesClosed) {
-      setBadge(badgeEyes, '✗ Closed', 'warn');
+      setBadge(badgeEyes, "✗ Closed", "warn");
     } else {
-      setBadge(badgeEyes, '✓ Open', 'good');
+      setBadge(badgeEyes, "✓ Open", "good");
     }
-    const eyeState = eyesClosed ? 'closed' : 'open';
+    const eyeState = eyesClosed ? "closed" : "open";
     if (eyeState !== lastEyeState) {
       appendLog(
-        eyesClosed ? 'Eyes closed detected' : 'Eyes open',
-        eyesClosed ? 'warn' : 'good',
+        eyesClosed ? "Eyes closed detected" : "Eyes open",
+        eyesClosed ? "warn" : "good",
       );
       lastEyeState = eyeState;
     }
   } else {
-    setBadge(badgeEyes, '— N/A —', 'idle');
+    setBadge(badgeEyes, "— N/A —", "idle");
   }
 
   /* ---- Multi-Face ---- */
   if (facesCount > 0) {
     if (multipleFacesAlert) {
-      setBadge(badgeMultiface, '⚠ ALERT', 'alert');
-      videoWrapper.classList.add('alert');
+      setBadge(badgeMultiface, "⚠ ALERT", "alert");
+      videoWrapper.classList.add("alert");
     } else {
-      setBadge(badgeMultiface, '✓ OK', 'good');
-      videoWrapper.classList.remove('alert');
+      setBadge(badgeMultiface, "✓ OK", "good");
+      videoWrapper.classList.remove("alert");
     }
-    setBadge(badgeCount, String(facesCount), facesCount > 1 ? 'warn' : 'info');
+    setBadge(badgeCount, String(facesCount), facesCount > 1 ? "warn" : "info");
 
     if (multipleFacesAlert !== lastMultiFace) {
       if (multipleFacesAlert) {
-        appendLog(`⚠ MULTIPLE FACES DETECTED (${facesCount})`, 'alert');
+        appendLog(`⚠ MULTIPLE FACES DETECTED (${facesCount})`, "alert");
       } else if (lastMultiFace !== null) {
-        appendLog('Multi-face alert cleared', 'good');
+        appendLog("Multi-face alert cleared", "good");
       }
       lastMultiFace = multipleFacesAlert;
     }
@@ -191,25 +205,25 @@ function onTelemetry(data) {
   /* ---- Away Duration ---- */
   const awaySec = (awayDuration / 1000).toFixed(1);
   if (awayDuration > 0) {
-    const awayVariant = awayDuration >= 3000 ? 'warn' : 'info';
+    const awayVariant = awayDuration >= 3000 ? "warn" : "info";
     setBadge(badgeAway, `${awaySec}s`, awayVariant);
   } else {
-    setBadge(badgeAway, '0s', 'good');
+    setBadge(badgeAway, "0s", "good");
   }
 
   /* ---- Cheating Flag ---- */
   if (cheating) {
-    setBadge(badgeCheating, `⚠ CHEATING`, 'alert');
-    videoWrapper.classList.add('alert');
+    setBadge(badgeCheating, `⚠ CHEATING`, "alert");
+    videoWrapper.classList.add("alert");
   } else {
-    setBadge(badgeCheating, '✓ Clean', 'good');
-    if (!multipleFacesAlert) videoWrapper.classList.remove('alert');
+    setBadge(badgeCheating, "✓ Clean", "good");
+    if (!multipleFacesAlert) videoWrapper.classList.remove("alert");
   }
   if (cheating !== lastCheating) {
     if (cheating) {
-      appendLog(`🚨 CHEATING DETECTED — ${cheatingReason}`, 'alert');
+      appendLog(`🚨 CHEATING DETECTED — ${cheatingReason}`, "alert");
     } else if (lastCheating !== null) {
-      appendLog('Cheating flag cleared', 'good');
+      appendLog("Cheating flag cleared", "good");
     }
     lastCheating = cheating;
   }
@@ -217,30 +231,33 @@ function onTelemetry(data) {
 
 /* ---------- Start ---------- */
 
-startBtn.addEventListener('click', async () => {
+startBtn.addEventListener("click", async () => {
   startBtn.disabled = true;
-  startBtn.textContent = 'Initializing…';
+  startBtn.textContent = "Initializing…";
 
   /* 1. Parse runtime config from DOM inputs */
-  const numFacesLimit  = parseInt(inputFacesLimit.value, 10)  || 1;
-  const fastLoop       = parseInt(inputFastLoop.value, 10)    || 300;
-  const slowLoop       = parseInt(inputSlowLoop.value, 10)    || 3000;
-  const awayTimeout    = (parseInt(inputAwayTimeout.value, 10) || 5) * 1000; // seconds → ms
+  const numFacesLimit = parseInt(inputFacesLimit.value, 10) || 1;
+  const fastLoop = parseInt(inputFastLoop.value, 10) || 300;
+  const slowLoop = parseInt(inputSlowLoop.value, 10) || 3000;
+  const awayTimeout = (parseInt(inputAwayTimeout.value, 10) || 5) * 1000; // seconds → ms
 
   /* Clear log */
-  logContainer.innerHTML = '';
-  appendLog(`Config → faces: ${numFacesLimit}, fast: ${fastLoop}ms, slow: ${slowLoop}ms, away: ${awayTimeout / 1000}s`, 'info');
+  logContainer.innerHTML = "";
+  appendLog(
+    `Config → faces: ${numFacesLimit}, fast: ${fastLoop}ms, slow: ${slowLoop}ms, away: ${awayTimeout / 1000}s`,
+    "info",
+  );
 
   /* 2. Request webcam */
   try {
     webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
     videoEl.srcObject = webcamStream;
     await videoEl.play();
-    appendLog('Webcam stream acquired', 'good');
+    appendLog("Webcam stream acquired", "good");
   } catch (err) {
-    appendLog(`Webcam error: ${err.message}`, 'alert');
+    appendLog(`Webcam error: ${err.message}`, "alert");
     startBtn.disabled = false;
-    startBtn.textContent = 'Start Invigilator';
+    startBtn.textContent = "Start Invigilator";
     return;
   }
 
@@ -254,22 +271,22 @@ startBtn.addEventListener('click', async () => {
 
   /* 4. Initialize (waits for worker READY) */
   try {
-    appendLog('Loading MediaPipe models in Web Worker…', 'info');
+    appendLog("Loading MediaPipe models in Web Worker…", "info");
     await engine.initialize();
-    appendLog('Worker ready — models loaded ✓', 'good');
+    appendLog("Worker ready — models loaded ✓", "good");
   } catch (err) {
-    appendLog(`Engine init error: ${err.message}`, 'alert');
+    appendLog(`Engine init error: ${err.message}`, "alert");
     startBtn.disabled = false;
-    startBtn.textContent = 'Start Invigilator';
+    startBtn.textContent = "Start Invigilator";
     return;
   }
 
   /* 5. Start frame capture */
   engine.start();
-  appendLog('Invigilator started — proctoring active', 'good');
+  appendLog("Invigilator started — proctoring active", "good");
 
   /* UI state */
-  startBtn.classList.add('hidden');
+  startBtn.classList.add("hidden");
   stopBtn.disabled = false;
 
   /* Lock config inputs */
@@ -281,7 +298,7 @@ startBtn.addEventListener('click', async () => {
 
 /* ---------- Stop ---------- */
 
-stopBtn.addEventListener('click', () => {
+stopBtn.addEventListener("click", () => {
   if (engine) {
     engine.stop();
     engine = null;
@@ -294,14 +311,19 @@ stopBtn.addEventListener('click', () => {
     videoEl.srcObject = null;
   }
 
-  appendLog('Exam stopped — engine terminated', 'warn');
+  appendLog("Exam stopped — engine terminated", "warn");
 
   /* Reset badges */
-  [badgeFace, badgeHead, badgeVertical, badgeEyes, badgeMultiface, badgeCheating].forEach((b) =>
-    setBadge(b, '— Idle —', 'idle'),
-  );
-  setBadge(badgeCount, '—', 'idle');
-  setBadge(badgeAway, '0s', 'idle');
+  [
+    badgeFace,
+    badgeHead,
+    badgeVertical,
+    badgeEyes,
+    badgeMultiface,
+    badgeCheating,
+  ].forEach((b) => setBadge(b, "— Idle —", "idle"));
+  setBadge(badgeCount, "—", "idle");
+  setBadge(badgeAway, "0s", "idle");
 
   /* Reset tracking state */
   lastHeadPose = null;
@@ -312,12 +334,12 @@ stopBtn.addEventListener('click', () => {
   lastCheating = null;
 
   /* Remove alert glow */
-  videoWrapper.classList.remove('alert');
+  videoWrapper.classList.remove("alert");
 
   /* UI state */
-  startBtn.classList.remove('hidden');
+  startBtn.classList.remove("hidden");
   startBtn.disabled = false;
-  startBtn.textContent = '▶ Start Invigilator';
+  startBtn.textContent = "▶ Start Invigilator";
   stopBtn.disabled = true;
 
   /* Unlock config inputs */

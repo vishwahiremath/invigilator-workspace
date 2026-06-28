@@ -7,7 +7,7 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@mycompany/invigilator": "*"
+    "@vishwahiremath/invigilator": "*"
   },
   "devDependencies": {
     "vite": "^5.0.0"
