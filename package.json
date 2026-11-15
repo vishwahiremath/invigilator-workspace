@@ -1,7 +1,13 @@
 {
+  "name": "invigilator-workspace",
   "private": true,
   "workspaces": [
     "invigilator",
     "demo-app"
-  ]
+  ],
+  "scripts": {
+    "dev": "vite demo-app --port 5173",
+    "start": "vite demo-app --port 5173",
+    "build": "vite build demo-app"
+  }
 }

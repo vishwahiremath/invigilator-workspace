@@ -1,252 +1,716 @@
-# invigilator
+# Invigilator Proctoring SDK
 
-`invigilator` is a lightweight, high-performance, client-side AI proctoring SDK designed to monitor examinee behavior and detect potential cheating in online exams. 
+A client-side browser proctoring SDK for real-time face tracking, gaze monitoring, native multi-screen detection, and browser lockdown.
 
-By leveraging **Google MediaPipe** and **Web Workers**, the entire proctoring pipeline runs directly in the user's browser. It offloads heavy machine learning inference to a background thread, ensuring a smooth, lag-free experience for the main application.
+[![npm version](https://img.shields.io/npm/v/invigilator.svg)](https://www.npmjs.com/package/invigilator)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Framework Examples](#framework-examples)
+  - [Next.js (App & Pages Router)](#nextjs-app--pages-router)
+  - [React](#react)
+  - [Vue 3](#vue-3)
+  - [Angular](#angular)
+- [Visual Feedback & Mirroring](#visual-feedback--mirroring)
+  - [Canvas Mirroring Note](#canvas-mirroring-note)
+- [Next.js & Webpack 5 Compatibility](#nextjs--webpack-5-compatibility)
+  - [Self-Hosting MediaPipe Assets (Offline / Firewalls)](#self-hosting-mediapipe-assets-offline--firewalls)
+  - [Violation Smoothing & Debounce](#violation-smoothing--debounce)
+- [API Reference](#api-reference)
+  - [Initialization](#initialization)
+  - [Face Tracking](#face-tracking)
+  - [Multi-Screen Detection (Native)](#multi-screen-detection-native)
+  - [Browser Monitoring (Direct DOM)](#browser-monitoring-direct-dom)
+  - [Browser Extension Bridge (Optional Tier 2)](#browser-extension-bridge-optional-tier-2)
+  - [Utilities](#utilities)
+- [Configuration](#configuration)
+- [TypeScript Types](#typescript-types)
+- [Browser Support](#browser-support)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Background Inference via Web Workers**: Keeps your UI responsive by running MediaPipe's `FaceLandmarker` and `FaceDetector` in a separate thread.
-- **Zero-Copy Frame Transfers**: Uses the `createImageBitmap` API to capture hardware-accelerated video frames from the webcam and transfer their ownership to the Web Worker, avoiding slow canvas-drawing operations and memory copying.
-- **Dual-Loop Architecture**:
-  - **Fast Loop (Real-time tracking)**: Runs at high frequency (e.g., every 300ms) to track face presence, eye closure (blink/gaze-away), and head pose (turned left/right, looking up/down).
-  - **Slow Loop (Auditing)**: Runs periodically (e.g., every 3000ms) using a face detector to count faces in the frame and flag multiple people.
-- **Backlog & Leak Protection**: Instantly drops new frames if the worker is busy processing a previous frame, and explicitly closes `ImageBitmap` instances to prevent GPU memory leaks.
-- **Smart Model Initialization**: Attempts to load models using hardware-accelerated **GPU** delegates first, with an automatic fallback to **CPU** if GPU delegates are unavailable.
-- **Vite & ESM Friendly**: Includes a built-in `importScripts` polyfill to support module-worker environments where native `importScripts()` is disabled.
-
----
-
-## How It Works
-
-```
-+-----------------------------------------------------------------+
-|                           MAIN THREAD                           |
-|                                                                 |
-|  [Webcam Stream] ---> createImageBitmap() ---> [ImageBitmap]    |
-|                                                      |          |
-|                                            (Transfer ownership) |
-+------------------------------------------------------|----------+
-                                                       v
-+-----------------------------------------------------------------+
-|                        BACKGROUND WORKER                        |
-|                                                                 |
-|  [Fast Loop]  --> MediaPipe FaceLandmarker --> Pose & Eyes      |
-|  [Slow Loop]  --> MediaPipe FaceDetector   --> Face Counting    |
-|                                                      |          |
-|                                           (Post Telemetry)      |
-+------------------------------------------------------|----------+
-                                                       v
-+-----------------------------------------------------------------+
-|                           MAIN THREAD                           |
-|                                                                 |
-|  onTelemetryUpdateCallback(telemetryData)                       |
-+-----------------------------------------------------------------+
-```
-
-### 1. Telemetry & Mathematical Heuristics
-The background worker processes facial landmarks to compute indicators of examinee attention:
-- **Eye Closure Detection**: Measures the vertical distance between the upper and lower eyelids. If the distance falls below a threshold, the eyes are flagged as closed.
-- **Horizontal Head Pose**: Calculates the ratio of distances from the nose to the left and right cheeks. Ratios outside `[0.38, 0.62]` indicate the head is turned left or right.
-- **Vertical Head Pose**: Calculates the ratio of distances from the nose to the forehead and chin. Ratios outside `[0.35, 0.62]` indicate the head is looking up or down.
-- **Away Detection & Cheating Flag**: If the user is "away" (face not visible, eyes closed, or looking down) for longer than the configured `awayTimeout` (e.g., 5 seconds), the engine flags a potential cheating event.
-- **Multiple Faces Alert**: Runs a face detector (BlazeFace short range) to count the faces in the frame. If the count exceeds the `numFacesLimit` (default `1`), a cheating event is flagged immediately.
-
----
-
-## Tech Stack & Dependencies
-
-The package is built with:
-- **JavaScript (ES Modules)**
-- **Web Workers API**
-- **HTML5 Video & ImageBitmap API**
-- **Google MediaPipe Tasks Vision** (`@mediapipe/tasks-vision` loaded dynamically via CDN in the worker)
+- 🎯 **Face Tracking & Head Pose** — Detects missing faces, multiple faces, camera obstruction/dark room, head turned away, and eye gaze displacement using Google MediaPipe in a Web Worker.
+- 📸 **Automatic Snapshot Generation** — Instantly captures and delivers compressed JPEG snapshot `Blob`s on any detected violation via `onFaceError`.
+- 🖥️ **Native Multi-Screen Detection** — Detects secondary monitors, projectors, or extended displays natively via the W3C Window Management API (`window.screen.isExtended`) with **zero extensions or permission prompts required**.
+- 🔒 **Browser Lockdown** — Fullscreen enforcement, clipboard blocking (`copy`, `cut`, `paste`), right-click disabling, mouse-out detection, and tab visibility/blur monitoring.
+- 🧩 **Extension Bridge (Optional)** — Ready-to-use bridge for deep OS-level restrictions like closing other browser tabs, OS lockdown, and full desktop screenshots (requires companion extension).
+- 🚀 **100% Client-Side & Keyless** — No API key or remote server required. Works out-of-the-box upon `npm install`.
 
 ---
 
 ## Installation
 
-Since the package is designed as an ES Module, you can import it directly into your frontend project. Ensure your build tool (such as Vite or Webpack) is configured to handle Web Workers and ES modules.
-
 ```bash
-npm install /path/to/invigilator-package
+npm install invigilator
 ```
+
+### Peer Dependencies
+
+The core ML models (MediaPipe Tasks Vision and BlazeFace) are loaded dynamically inside a background Web Worker via high-speed CDN. No additional peer dependencies are required.
+
+---
+
+## Quick Start
+
+```typescript
+import { Invigilator } from "invigilator";
+
+// 1. Create a proctoring client with callbacks
+const proctor = new Invigilator({
+  mirrored: true, // Aligns detection boxes and eye tracking with mirrored webcam
+
+  // Start & stop event callbacks
+  onCameraBlocked: () => console.warn("Camera blocked or dark room!"),
+  onCameraBlockedStop: () => console.log("Camera unblocked."),
+  onNoFaceDetected: () => console.warn("No face detected!"),
+  onNoFaceDetectedStop: () => console.log("Face detected again."),
+  onMultipleFaceDetected: () => console.warn("Multiple faces detected!"),
+  onMultipleFaceDetectedStop: () => console.log("Returned to single face."),
+  onFaceAwayFromScreen: () => console.warn("Face turned away from screen!"),
+  onFaceAwayFromScreenStop: () => console.log("Face returned to center."),
+  onEyeballsDisplaced: () => console.warn("Eyes looking away for > 5 seconds!"),
+  onEyeballsDisplacedStop: () => console.log("Eyes back to center."),
+
+  // Native multi-screen callback
+  onMultiScreenDetected: (data) => {
+    console.warn("Multiple monitors detected:", data);
+  },
+
+  // Catch-all violation snapshot callback (delivers JPEG Blob)
+  onFaceError: (message, frameBlob, timestamp) => {
+    console.warn(`Violation: ${message}`, frameBlob);
+    // e.g. upload frameBlob to your evidence server
+  },
+});
+
+// 2. Initialize the SDK
+await proctor.init();
+
+// 3. Start face tracking (pass <video> element and optional overlay <canvas>)
+const video = document.getElementById("webcam") as HTMLVideoElement;
+const canvas = document.getElementById("canvas-overlay") as HTMLCanvasElement;
+await proctor.startFaceTracking(video, canvas);
+
+// 4. Enable browser lockdown
+await proctor.disableCopyAndPaste();
+proctor.disableRightClick();
+proctor.startMouseOutDetection(() => console.warn("Mouse left the browser window!"));
+proctor.startVisibilityChangeDetection(() => {
+  if (document.hidden) console.warn("Candidate switched tabs!");
+});
+
+// 5. Clean up when finished
+proctor.stopFacialTracking();
+await proctor.enableCopyAndPaste();
+```
+
+---
+
+## Framework Examples
+
+### Next.js (App & Pages Router)
+
+Because Invigilator relies on browser APIs (`navigator.mediaDevices`, `Worker`, and `HTMLCanvasElement`), use the `'use client';` directive in the Next.js App Router (or dynamic SSR-disabled imports in Pages Router):
+
+```tsx
+'use client';
+
+import React, { useEffect, useRef, useState } from "react";
+import { Invigilator } from "invigilator";
+
+export default function ExamProctorView() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [warning, setWarning] = useState<string>("");
+
+  const [proctor] = useState(
+    () =>
+      new Invigilator({
+        mirrored: true,
+        // Optional: override asset URLs for air-gapped/self-hosted environments
+        // tasksVisionUrl: "/mediapipe/tasks-vision.js",
+        // wasmPath: "/mediapipe/wasm",
+
+        // Hysteresis threshold: wait 6 consecutive frames (~1.5s) before triggering
+        noFaceThreshold: 6,
+
+        onNoFaceDetected: () => setWarning("Warning: Face not visible in camera!"),
+        onNoFaceDetectedStop: () => setWarning(""),
+        onMultipleFaceDetected: () => setWarning("Warning: Multiple people detected in frame!"),
+        onMultipleFaceDetectedStop: () => setWarning(""),
+        onFaceAwayFromScreen: () => setWarning("Please look straight at your screen!"),
+        onFaceAwayFromScreenStop: () => setWarning(""),
+        onCameraBlocked: () => setWarning("Camera blocked or inadequate lighting!"),
+        onCameraBlockedStop: () => setWarning(""),
+        onFaceError: (msg, frameBlob) => {
+          console.warn(`[Violation Event] ${msg}`, frameBlob);
+        },
+      })
+  );
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function setupProctoring() {
+      await proctor.init();
+      if (!mounted || !videoRef.current) return;
+
+      await proctor.startFaceTracking(videoRef.current, canvasRef.current || undefined);
+      await proctor.disableCopyAndPaste();
+      proctor.disableRightClick();
+    }
+
+    setupProctoring();
+
+    return () => {
+      mounted = false;
+      proctor.stopFacialTracking();
+      proctor.enableCopyAndPaste();
+      proctor.enableRightClick();
+    };
+  }, [proctor]);
+
+  return (
+    <div className="flex flex-col items-center">
+      {warning && (
+        <div className="bg-red-600 text-white px-4 py-2 rounded mb-2 font-semibold">
+          {warning}
+        </div>
+      )}
+      <div style={{ position: "relative", width: 480, height: 360 }}>
+        {/* Mirrored webcam video */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            width: "100%",
+            height: "100%",
+            transform: "scaleX(-1)", // CSS flip for natural mirror preview
+            objectFit: "cover",
+          }}
+        />
+        {/* Canvas overlay: Do NOT add scaleX(-1) here; 2D context mirrors automatically */}
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+```
+
+### React
+
+```tsx
+import React, { useEffect, useRef, useState } from "react";
+import { Invigilator } from "invigilator";
+
+export default function ProctoredExam() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const [proctor] = useState(
+    () =>
+      new Invigilator({
+        mirrored: true,
+        onCameraBlocked: () => console.warn("Camera blocked!"),
+        onNoFaceDetected: () => console.warn("No face detected!"),
+        onNoFaceDetectedStop: () => console.log("Face detected again."),
+        onMultipleFaceDetected: () => console.warn("Multiple faces!"),
+        onFaceAwayFromScreen: () => console.warn("Looking away!"),
+        onEyeballsDisplaced: () => console.warn("Gaze away for > 5 seconds!"),
+        onMultiScreenDetected: (data) => console.warn("Multiple displays!", data),
+        onFaceError: (msg, blob) => {
+          // Upload JPEG violation snapshot to server
+          console.log(`Snapshot captured [${blob.size} bytes]: ${msg}`);
+        },
+      })
+  );
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function start() {
+      await proctor.init();
+      if (!mounted || !videoRef.current) return;
+
+      // Start face tracking and lockdown
+      await proctor.startFaceTracking(videoRef.current, canvasRef.current || undefined);
+      await proctor.disableCopyAndPaste();
+      proctor.startMouseOutDetection(() => console.warn("Mouse left window"));
+      proctor.startVisibilityChangeDetection(() => {
+        if (document.hidden) console.warn("Tab switched");
+      });
+
+      // Check for secondary monitors without extension
+      const screenCheck = await proctor.checkMultiScreenDetection();
+      if (screenCheck.isExtended) {
+        alert("Please disconnect your secondary monitor.");
+      }
+    }
+
+    start();
+
+    return () => {
+      mounted = false;
+      proctor.stopFacialTracking();
+      proctor.enableCopyAndPaste();
+    };
+  }, [proctor]);
+
+  return (
+    <div style={{ position: "relative", width: 640, height: 480 }}>
+      {/* Mirrored webcam video */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        style={{ width: "100%", height: "100%", transform: "scaleX(-1)", objectFit: "cover" }}
+      />
+      {/* Green bounding box overlay canvas */}
+      <canvas
+        ref={canvasRef}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+        }}
+      />
+    </div>
+  );
+}
+```
+
+---
+
+### Vue 3
+
+```vue
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount } from "vue";
+import { Invigilator } from "invigilator";
+
+const videoRef = ref<HTMLVideoElement>();
+const canvasRef = ref<HTMLCanvasElement>();
+
+const proctor = new Invigilator({
+  mirrored: true,
+  onNoFaceDetected: () => console.warn("No face detected!"),
+  onNoFaceDetectedStop: () => console.log("Face detected again."),
+  onMultipleFaceDetected: () => console.warn("Multiple faces!"),
+  onFaceError: (msg, blob) => console.log(`Violation snapshot: ${msg}`, blob),
+});
+
+onMounted(async () => {
+  await proctor.init();
+  if (videoRef.value) {
+    await proctor.startFaceTracking(videoRef.value, canvasRef.value);
+    await proctor.disableCopyAndPaste();
+  }
+});
+
+onBeforeUnmount(() => {
+  proctor.stopFacialTracking();
+  proctor.enableCopyAndPaste();
+});
+</script>
+
+<template>
+  <div style="position: relative; width: 640px; height: 480px;">
+    <video
+      ref="videoRef"
+      autoplay
+      playsinline
+      muted
+      style="width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover;"
+    />
+    <canvas
+      ref="canvasRef"
+      style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"
+    />
+  </div>
+</template>
+```
+
+---
+
+### Angular
+
+```typescript
+import { Component, ViewChild, ElementRef, OnInit, OnDestroy } from "@angular/core";
+import { Invigilator } from "invigilator";
+
+@Component({
+  selector: "app-proctored-exam",
+  template: `
+    <div style="position: relative; width: 640px; height: 480px;">
+      <video
+        #webcam
+        autoplay
+        playsinline
+        muted
+        style="width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover;"
+      ></video>
+      <canvas
+        #overlay
+        style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"
+      ></canvas>
+    </div>
+  `,
+})
+export class ProctoredExamComponent implements OnInit, OnDestroy {
+  @ViewChild("webcam", { static: true }) videoRef!: ElementRef<HTMLVideoElement>;
+  @ViewChild("overlay", { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
+
+  private proctor = new Invigilator({
+    mirrored: true,
+    onNoFaceDetected: () => console.warn("No face detected"),
+    onNoFaceDetectedStop: () => console.log("Face detected again"),
+    onMultipleFaceDetected: () => console.warn("Multiple faces!"),
+    onFaceError: (msg, blob) => console.log("Violation snapshot:", msg, blob),
+  });
+
+  async ngOnInit() {
+    await this.proctor.init();
+    await this.proctor.startFaceTracking(
+      this.videoRef.nativeElement,
+      this.canvasRef.nativeElement
+    );
+    await this.proctor.disableCopyAndPaste();
+  }
+
+  ngOnDestroy() {
+    this.proctor.stopFacialTracking();
+    this.proctor.enableCopyAndPaste();
+  }
+}
+```
+
+---
+
+## Visual Feedback & Mirroring
+
+### Face Boxes
+By default, the SDK processes face detection in the background. If you want to show **green detection bounding boxes** to the candidate, provide a `<canvas>` element as the second parameter to `startFaceTracking(video, canvas)`.
+
+Ensure the canvas is positioned directly over the video element with `pointer-events: none`.
+
+### Mirroring (Flip)
+Most webcam applications mirror the video (horizontally flip it) to provide a more natural user experience:
+```css
+video {
+  transform: scaleX(-1);
+}
+```
+
+When `mirrored: true` is set (the default):
+1. **Detection Boxes** are automatically flipped horizontally on the canvas to match your mirrored video.
+2. **Eye Gaze & Head Pose** logic is automatically aligned so that looking "Left" from the examinee's perspective is correctly identified.
+
+### Canvas Mirroring Note
+
+> [!NOTE]
+> When `mirrored: true` (default), the overlay canvas is automatically mirrored in 2D context (`ctx.scale(-1, 1)`). Do **NOT** add CSS `transform: scaleX(-1)` to the `<canvas>` element — only apply it to the `<video>` element.
+>
+> If your application or CSS framework applies `transform: scaleX(-1)` to both `<video>` and `<canvas>`, pass `canvasMirrored: false` to the `Invigilator` configuration to avoid double-mirroring.
+
+---
+
+## Next.js & Webpack 5 Compatibility
+
+In Next.js and other Webpack 5 environments, Webpack's AST parser evaluates `import(...)` statements at build time. `invigilator` loads dynamic worker modules via a safe native import wrapper (`new Function`), preventing build errors like `UnhandledSchemeError: Reading from "https:" is not handled by plugins`.
+
+### Self-Hosting MediaPipe Assets (Offline / Firewalls)
+
+In enterprise, institutional, or university test environments, firewalls often restrict access to public CDN domains (`cdn.jsdelivr.net` or `storage.googleapis.com`). You can host the MediaPipe WASM binaries and model files locally in your application's `/public` folder or a private CDN:
+
+```typescript
+const proctor = new Invigilator({
+  // Custom asset URLs for enterprise/air-gapped environments
+  tasksVisionUrl: "/mediapipe/tasks-vision.js",
+  wasmPath: "/mediapipe/wasm",
+  faceLandmarkerModelPath: "/mediapipe/models/face_landmarker.task",
+  faceDetectorModelPath: "/mediapipe/models/blaze_face_short_range.tflite",
+});
+```
+
+### Violation Smoothing & Debounce
+
+To prevent false alarms during initial model warm-up, candidate blinks (150–300ms), or momentary glances at scratch paper:
+- **Consecutive Frame Debounce (`noFaceThreshold: 6`)**: A "No face detected" event will only be latched once absent for consecutive frames exceeding this threshold (~1.5s at the default 250ms polling loop).
+- **Instant Recovery State Machine**: The moment the candidate re-centers or a face is detected again, the counter resets and `onNoFaceDetectedStop` / `onFaceErrorStop` are dispatched immediately to clear warning UI.
+- Configurable via `noFaceThreshold` in the constructor.
 
 ---
 
 ## API Reference
 
-### `InvigilatorEngine`
+### Initialization
 
-The main class used to control the proctoring session.
+#### `new Invigilator(config?: ProctoringConfig)`
+Creates a new proctoring instance.
 
-#### Constructor
-
-```javascript
-const engine = new InvigilatorEngine(videoElement, canvasElement, onTelemetryUpdate, config);
-```
-
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| `videoElement` | `HTMLVideoElement` | The active `<video>` element streaming the webcam. |
-| `canvasElement` | `HTMLCanvasElement` | A scratch canvas element (reserved for future use). |
-| `onTelemetryUpdate` | `Function` | Callback function that receives telemetry data. |
-| `config` | `Object` | Optional configuration overrides (see below). |
-
-#### Configuration Options (`config`)
-
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `numFacesLimit` | `number` | `1` | Maximum number of allowed faces before triggering an alert. |
-| `fastLoop` | `number` | `300` | Interval (in ms) to capture frames and run face landmark checks. |
-| `slowLoop` | `number` | `3000` | Interval (in ms) to run the face detector to count faces. |
-| `awayTimeout` | `number` | `5000` | Time (in ms) the user can be "away" before flagging `cheating = true`. |
-
-#### Methods
-
-- `async initialize()`: Spawns the Web Worker, downloads the MediaPipe models (FaceLandmarker and FaceDetector) within the worker, and prepares the engine. Resolves when the worker is ready.
-- `start()`: Starts the frame capture and inference loop.
-- `stop()`: Stops the capture loop, terminates the Web Worker, and cleans up resources.
-
----
-
-## Telemetry Data Structure
-
-The `onTelemetryUpdate` callback receives an object with the following properties:
+#### `init(): Promise<void>`
+Initializes the SDK and prepares the background worker. Must be called before starting face tracking.
 
 ```typescript
-{
-  type: "TELEMETRY",
-  timestamp: number,          // Epoch timestamp of the processed frame
-  facePresent: boolean,       // True if a face is detected in the frame
-  eyesClosed: boolean,        // True if the user's eyes are detected as closed
-  headPose: "CENTER" | "TURNED_LEFT" | "TURNED_RIGHT",
-  verticalHeadPose: "CENTER" | "LOOKING_UP" | "LOOKING_DOWN",
-  facesCount: number,         // Total faces detected (updated every slowLoop)
-  multipleFacesAlert: boolean,// True if facesCount > numFacesLimit
-  awayDuration: number,       // Cumulative milliseconds the user has been "away"
-  cheating: boolean,          // True if awayDuration >= awayTimeout OR multipleFacesAlert is true
-  cheatingReason: string      // Reason for the cheating flag (e.g., "Face not visible", "Multiple faces")
+await proctor.init();
+```
+
+#### `isInitialized(): boolean`
+Returns `true` if `init()` has completed.
+
+#### `getProctoringFeatures(): SchoolFeatureConfig`
+Returns the enabled feature flags.
+
+---
+
+### Face Tracking
+
+#### `startFaceTracking(videoElement: HTMLVideoElement, canvasElement?: HTMLCanvasElement): Promise<void>`
+Requests webcam permissions (if stream not already attached), plays the video, and begins background face detection. Optionally renders green bounding boxes on `canvasElement`.
+
+```typescript
+const video = document.getElementById("webcam") as HTMLVideoElement;
+const canvas = document.getElementById("canvas-overlay") as HTMLCanvasElement;
+await proctor.startFaceTracking(video, canvas);
+```
+
+**Detects:**
+| Event | Start Callback | Stop Callback | Description |
+|---|---|---|---|
+| Camera blocked / dark room | `onCameraBlocked` | `onCameraBlockedStop` | Average frame luminance < 20 |
+| No face in frame | `onNoFaceDetected` | `onNoFaceDetectedStop` | No face visible |
+| Multiple faces | `onMultipleFaceDetected` | `onMultipleFaceDetectedStop` | More than 1 face detected |
+| Face turned away | `onFaceAwayFromScreen` | `onFaceAwayFromScreenStop` | Head turned left/right or up/down |
+| Eyes displaced for > 5s | `onEyeballsDisplaced` | `onEyeballsDisplacedStop` | Gaze directed away for >= 5 seconds |
+
+#### `stopFacialTracking(): void`
+Stops face detection, releases webcam media tracks, and terminates the background worker.
+
+---
+
+### Multi-Screen Detection (Native)
+
+#### `checkMultiScreenDetection(): Promise<{ isExtended: boolean, screenCount: number, method: string }>`
+Detects if the user has multiple monitors or an extended desktop connected.
+- **Zero extensions or permission prompts required** in modern Chromium browsers (Chrome & Edge 100+ via `window.screen.isExtended`).
+- Automatically falls back to Window Management API and extension bridge if present.
+
+```typescript
+const result = await proctor.checkMultiScreenDetection();
+if (result.isExtended) {
+  console.warn("Multiple monitors active! Screen count:", result.screenCount);
+}
+```
+
+#### `startMultiScreenMonitoring(callback?: (data: any) => void): void`
+Attaches real-time listeners for display connect/disconnect events (e.g. if an examinee plugs in an external monitor or HDMI cable mid-assessment).
+
+```typescript
+proctor.startMultiScreenMonitoring((data) => {
+  alert("External monitor connected! Please disconnect it immediately.");
+});
+```
+
+#### `stopMultiScreenMonitoring(): void`
+Stops real-time screen change monitoring.
+
+---
+
+### Browser Monitoring (Direct DOM)
+
+#### `disableCopyAndPaste(): Promise<void>`
+Blocks `copy`, `cut`, and `paste` events across the document using `preventDefault()`.
+
+#### `enableCopyAndPaste(): Promise<void>`
+Restores normal clipboard operations.
+
+#### `disableRightClick(): void` / `enableRightClick(): void`
+Disables or enables the right-click context menu.
+
+#### `openFullscreen(element?: HTMLElement): Promise<void>`
+Requests cross-browser fullscreen mode. Defaults to `document.documentElement`.
+
+```typescript
+await proctor.openFullscreen();
+```
+
+#### `closeFullscreen(): Promise<void>`
+Exits fullscreen mode across all browsers.
+
+#### `startMouseOutDetection(callback: (event: MouseEvent) => void): void`
+Fires whenever the user's cursor exits the browser window (`mouseleave` on root element).
+
+#### `stopMouseOutDetection(callback: (event: MouseEvent) => void): void`
+Removes the mouse-leave listener. Pass the same function reference.
+
+#### `startVisibilityChangeDetection(callback: (event: Event) => void): void`
+Fires whenever the page visibility changes (e.g., candidate minimizes browser or switches tabs).
+
+```typescript
+proctor.startVisibilityChangeDetection(() => {
+  if (document.hidden) console.warn("Candidate left the exam tab!");
+});
+```
+
+#### `stopVisibilityChangeDetection(callback: (event: Event) => void): void`
+Removes the visibility change listener.
+
+---
+
+### Browser Extension Bridge (Optional Tier 2)
+
+For deep OS-level lockdown and tab control via companion extension:
+
+| Method | Dispatched Message | Description |
+|---|---|---|
+| `isExtensionInstalled()` | — | Returns `true` if companion extension is detected |
+| `enableProctoringExtension()` | `ENABLE_EXTENSION` | Activates extension |
+| `disableProctoringExtension()` | `DISABLE_EXTENSION` | Deactivates extension |
+| `closeOtherTabs()` | `CLOSE_TABS` | Closes all other tabs in the browser window |
+| `enableLockdownMode()` | `ENABLE_LOCKDOWN` | Requests OS-level window lockdown |
+| `takeDeviceSnapshot()` | `TAKE_SNAPSHOT` | Captures full OS screen snapshot |
+| `disableExternalDevices()` | `DISABLE_EXTERNAL_DEVICES` | Requests blocking external peripherals |
+| `stopBackgroundApps()` | `STOP_BACKGROUND_APPS` | Requests suspending background apps |
+| `disableRightClickAndClipboard()` | `DISABLE_RIGHT_CLICK_CLIPBOARD` | Disables clipboard via extension |
+
+---
+
+### Utilities
+
+#### `getDevices(): Promise<{ videoDevices: MediaDeviceInfo[], audioDevices: MediaDeviceInfo[] }>`
+Enumerates available camera and microphone devices for building device-selection dropdowns.
+
+```typescript
+import { getDevices } from "invigilator";
+
+const { videoDevices, audioDevices } = await getDevices();
+```
+
+#### `chromeExtensionExists(): boolean`
+Returns whether the companion proctoring extension is installed.
+
+---
+
+## Configuration
+
+Passed to the constructor via `ProctoringConfig`:
+
+```typescript
+interface ProctoringConfig {
+  mirrored?: boolean;                     // Default: true. Flips bounding boxes and eye gaze logic.
+  canvasMirrored?: boolean;               // Default: value of mirrored. Controls 2D canvas mirroring.
+  mockExtension?: boolean;                // Default: false. Simulates extension bridge in dev environments.
+
+  // Sensitivity, debouncing & performance tuning
+  noFaceThreshold?: number;               // Default: 6 frames (~1.5s). Debounce before triggering onNoFaceDetected.
+  fastLoop?: number;                      // Default: 250 (ms). Interval for face & gaze inference loop.
+  slowLoop?: number;                      // Default: 2500 (ms). Interval for multi-face count detection.
+  awayTimeout?: number;                   // Default: 5000 (ms). Threshold for away/cheating flag.
+  eyeMovementDuration?: number;           // Default: 5000 (ms). Threshold for gaze displacement flag.
+  brightnessThreshold?: number;           // Default: 20. Minimum average luminance before flagging camera blocked.
+  videoConstraints?: MediaStreamConstraints | MediaTrackConstraints; // Camera resolution constraints.
+
+  // Custom asset URLs (for offline, Next.js / Webpack, or air-gapped institutional firewalls)
+  tasksVisionUrl?: string;                // Default: jsDelivr CDN. URL to @mediapipe/tasks-vision ESM bundle.
+  wasmPath?: string;                      // Default: jsDelivr CDN. URL or local path to tasks-vision WASM files.
+  faceLandmarkerModelPath?: string;       // Default: Google storage CDN URL to face_landmarker.task.
+  faceDetectorModelPath?: string;         // Default: Google storage CDN URL to blaze_face_short_range.tflite.
+
+  // Face detection callbacks
+  onCameraBlocked?: () => void;
+  onCameraBlockedStop?: () => void;
+  onNoFaceDetected?: () => void;
+  onNoFaceDetectedStop?: () => void;
+  onMultipleFaceDetected?: () => void;
+  onMultipleFaceDetectedStop?: () => void;
+  onFaceAwayFromScreen?: () => void;
+  onFaceAwayFromScreenStop?: () => void;
+  onEyeballsDisplaced?: () => void;
+  onEyeballsDisplacedStop?: () => void;
+
+  // Generic catch-all violation snapshot callback
+  onFaceError?: (message: FacialDetectorErrorMessage | string, frame: Blob, time: number) => void;
+  onFaceErrorStop?: (message: FacialDetectorErrorMessageStop | string, frame: Blob, time: number) => void;
+
+  // Multi-screen & extension callbacks
+  onMultiScreenDetected?: (data: any) => void;
+  onSnapshotTaken?: (data: any) => void;
 }
 ```
 
 ---
 
-## Example Usage
+## TypeScript Types
 
-Here is a complete example showing how to set up the webcam stream, initialize the `InvigilatorEngine`, and handle the proctoring telemetry.
+All types and interfaces are exported from the root package:
 
-### HTML
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Invigilator Demo</title>
-  <style>
-    #webcam { width: 480px; height: 360px; background: #000; transform: scaleX(-1); }
-    .alert { border: 4px solid red; }
-  </style>
-</head>
-<body>
-  <h1>AI Proctoring Session</h1>
-  <video id="webcam" autoplay playsinline muted></video>
-  <div id="status">Status: Idle</div>
-  
-  <button id="start-btn">Start Proctoring</button>
-  <button id="stop-btn" disabled>Stop</button>
-
-  <script type="module" src="app.js"></script>
-</body>
-</html>
+```typescript
+import type {
+  ProctoringConfig,
+  SchoolFeatureConfig,
+  MonitoringEvent,
+  MonitoringData,
+  FaceTrackingReturn,
+  ErrorCallback,
+  FacialDetectorErrorMessage,
+  FacialDetectorErrorMessageStop,
+} from "invigilator";
 ```
 
-### JavaScript (`app.js`)
+---
+
+## Browser Support
+
+| Feature | Chrome | Edge | Firefox | Safari | Brave / Opera |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Face Tracking (Worker + MediaPipe)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Native Multi-Screen (`isExtended`)** | ✅ | ✅ | ⚠️ (extension) | ⚠️ (extension) | ✅ |
+| **Fullscreen API** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Clipboard & Context Menu Lock** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Tab Visibility & Mouse-Out** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Companion Extension** | ✅ | ✅ | ❌ | ❌ | ✅ |
+
+---
+
+## Backward Compatibility
+
+The legacy `InvigilatorEngine` class remains fully supported:
 
 ```javascript
-import { InvigilatorEngine } from 'invigilator';
+import { InvigilatorEngine } from "invigilator";
 
-const videoEl = document.getElementById('webcam');
-const startBtn = document.getElementById('start-btn');
-const stopBtn = document.getElementById('stop-btn');
-const statusEl = document.getElementById('status');
-
-let engine = null;
-let stream = null;
-
-// Telemetry handler
-function handleTelemetry(telemetry) {
-  if (telemetry.cheating) {
-    statusEl.textContent = `ALERT: Cheating detected! Reason: ${telemetry.cheatingReason}`;
-    videoEl.classList.add('alert');
-  } else {
-    statusEl.textContent = `Proctoring active. Head: ${telemetry.headPose}, Eyes: ${telemetry.eyesClosed ? 'Closed' : 'Open'}`;
-    videoEl.classList.remove('alert');
-  }
-  
-  console.log('Telemetry Update:', telemetry);
-}
-
-// Start proctoring
-startBtn.addEventListener('click', async () => {
-  try {
-    startBtn.disabled = true;
-    statusEl.textContent = 'Requesting camera...';
-    
-    // 1. Get webcam stream
-    stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    videoEl.srcObject = stream;
-    await videoEl.play();
-
-    // 2. Instantiate the engine
-    engine = new InvigilatorEngine(videoEl, null, handleTelemetry, {
-      numFacesLimit: 1,
-      fastLoop: 300,      // Check landmarks every 300ms
-      slowLoop: 3000,     // Count faces every 3 seconds
-      awayTimeout: 5000   // Flag cheating if away for 5 seconds
-    });
-
-    statusEl.textContent = 'Loading AI models in background...';
-    
-    // 3. Initialize engine (loads models in worker)
-    await engine.initialize();
-    
-    // 4. Start proctoring loop
-    engine.start();
-    
-    statusEl.textContent = 'Proctoring started.';
-    stopBtn.disabled = false;
-  } catch (error) {
-    console.error('Initialization failed:', error);
-    statusEl.textContent = `Error: ${error.message}`;
-    startBtn.disabled = false;
-  }
-});
-
-// Stop proctoring
-stopBtn.addEventListener('click', () => {
-  if (engine) {
-    engine.stop();
-    engine = null;
-  }
-  
-  if (stream) {
-    stream.getTracks().forEach(track => track.stop());
-    videoEl.srcObject = null;
-  }
-  
-  statusEl.textContent = 'Proctoring stopped.';
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  videoEl.classList.remove('alert');
-});
+const engine = new InvigilatorEngine(videoEl, canvasEl, onTelemetryUpdate);
+await engine.initialize();
+engine.start();
 ```
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+[MIT](./LICENSE) © Vishwahiremath

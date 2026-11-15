@@ -4,7 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite"
+    "dev": "vite --port 5173",
+    "start": "vite --port 5173",
+    "build": "vite build"
   },
   "dependencies": {
     "invigilator": "*"
