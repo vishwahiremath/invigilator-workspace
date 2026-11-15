@@ -1,42 +1,70 @@
 /**
  * demo-app/main.js
  *
- * Wires up the Invigilator AI proctoring engine to the dashboard UI.
- * Reads runtime configuration from DOM inputs, requests webcam access,
- * and drives the telemetry display.
+ * Demonstrates the Invigilator SDK:
+ * - Real-time face tracking with start/stop event callbacks
+ * - Overlay canvas with green bounding boxes & visual mirroring
+ * - Browser monitoring: clipboard blocking, fullscreen, mouse-out, tab visibility
+ * - Native Multi-Screen detection (W3C Window Management API, ZERO extension needed)
+ * - Browser extension bridge with built-in mock simulator & real extension support
  */
 
-import { InvigilatorEngine } from "invigilator";
+import { Invigilator, chromeExtensionExists } from "invigilator";
 
-/* ---------- DOM refs ---------- */
-const startBtn = document.getElementById("start-btn");
-const stopBtn = document.getElementById("stop-btn");
+/* ---------- DOM References ---------- */
+const startSdkBtn = document.getElementById("start-sdk-btn");
+const stopSdkBtn = document.getElementById("stop-sdk-btn");
 const videoEl = document.getElementById("webcam");
-const canvasEl = document.getElementById("frame-canvas");
-const logContainer = document.getElementById("log-container");
+const canvasEl = document.getElementById("canvas-overlay");
+const videoPlaceholder = document.getElementById("video-placeholder");
 const videoWrapper = document.getElementById("video-wrapper");
+const logContainer = document.getElementById("log-container");
+const clearLogBtn = document.getElementById("clear-log-btn");
 
 /* Badges */
-const badgeFace = document.getElementById("badge-face");
-const badgeHead = document.getElementById("badge-head");
-const badgeEyes = document.getElementById("badge-eyes");
-const badgeVertical = document.getElementById("badge-vertical");
-const badgeMultiface = document.getElementById("badge-multiface");
-const badgeCount = document.getElementById("badge-count");
-const badgeAway = document.getElementById("badge-away");
-const badgeCheating = document.getElementById("badge-cheating");
+const badgeStream = document.getElementById("badge-stream");
+const badgeCameraBlocked = document.getElementById("badge-camera-blocked");
+const badgeNoFace = document.getElementById("badge-no-face");
+const badgeMultiFace = document.getElementById("badge-multi-face");
+const badgeFaceAway = document.getElementById("badge-face-away");
+const badgeEyeballs = document.getElementById("badge-eyeballs");
+const badgeSnapshots = document.getElementById("badge-snapshots");
+const badgeFullscreen = document.getElementById("badge-fullscreen");
+const badgeClipboard = document.getElementById("badge-clipboard");
+const badgeMouseout = document.getElementById("badge-mouseout");
+const badgeVisibility = document.getElementById("badge-visibility");
+const badgeExtensionStatus = document.getElementById("badge-extension-status");
+const badgeNativeMultiscreen = document.getElementById("badge-native-multiscreen");
 
-/* Config inputs */
-const inputFacesLimit = document.getElementById("input-faces-limit");
-const inputFastLoop = document.getElementById("input-fast-loop");
-const inputSlowLoop = document.getElementById("input-slow-loop");
-const inputAwayTimeout = document.getElementById("input-away-timeout");
+/* Browser Monitoring Buttons */
+const btnEnterFullscreen = document.getElementById("btn-enter-fullscreen");
+const btnExitFullscreen = document.getElementById("btn-exit-fullscreen");
+const btnDisableClipboard = document.getElementById("btn-disable-clipboard");
+const btnEnableClipboard = document.getElementById("btn-enable-clipboard");
+const btnStartMouseout = document.getElementById("btn-start-mouseout");
+const btnStopMouseout = document.getElementById("btn-stop-mouseout");
+const btnStartVisibility = document.getElementById("btn-start-visibility");
+const btnStopVisibility = document.getElementById("btn-stop-visibility");
+const btnCheckNativeScreen = document.getElementById("btn-check-native-screen");
+const btnMonitorNativeScreen = document.getElementById("btn-monitor-native-screen");
+
+/* Extension Bridge Buttons & Toggle */
+const mockExtensionToggle = document.getElementById("mock-extension-toggle");
+const btnCloseTabs = document.getElementById("btn-close-tabs");
+const btnLockdown = document.getElementById("btn-lockdown");
+const btnMultiscreen = document.getElementById("btn-multiscreen");
+const btnSnapshot = document.getElementById("btn-snapshot");
+const btnDisableDevices = document.getElementById("btn-disable-devices");
+const btnStopApps = document.getElementById("btn-stop-apps");
 
 /* ---------- State ---------- */
-let engine = null;
-let webcamStream = null;
+let proctor = null;
+let snapshotCount = 0;
+let mouseOutCount = 0;
+let visibilityChangeCount = 0;
+let isAutoMonitoringScreens = false;
 
-/* ---------- Helpers ---------- */
+/* ---------- Logging & Badge Helpers ---------- */
 
 function timestamp() {
   return new Date().toLocaleTimeString("en-GB", { hour12: false });
@@ -44,307 +72,426 @@ function timestamp() {
 
 function appendLog(message, level = "info") {
   const colors = {
-    info: "text-gray-500",
-    good: "text-green-600",
-    warn: "text-yellow-600",
-    alert: "text-red-600",
+    info: "text-slate-500",
+    good: "text-emerald-600 font-medium",
+    warn: "text-amber-600 font-medium",
+    alert: "text-red-600 font-bold",
   };
 
   const entry = document.createElement("div");
   entry.className = colors[level] || colors.info;
   entry.textContent = `[${timestamp()}] ${message}`;
   logContainer.appendChild(entry);
-
-  /* Auto-scroll to bottom */
   logContainer.scrollTop = logContainer.scrollHeight;
 
-  /* Cap at 200 entries */
   while (logContainer.children.length > 200) {
     logContainer.removeChild(logContainer.firstChild);
   }
 }
 
-/**
- * Apply a Tailwind colour set to a badge element.
- */
 function setBadge(el, text, variant) {
+  if (!el) return;
   const styles = {
-    idle: "bg-gray-100 text-gray-400",
-    good: "bg-green-50 text-green-700",
-    warn: "bg-yellow-50 text-yellow-700",
-    alert: "bg-red-50 text-red-700 badge-pulse",
-    info: "bg-blue-50 text-blue-700",
-    neutral: "bg-purple-50 text-purple-700",
+    idle: "bg-slate-100 text-slate-400",
+    good: "bg-emerald-50 text-emerald-700 font-semibold",
+    warn: "bg-amber-50 text-amber-700 font-semibold",
+    alert: "bg-red-50 text-red-700 font-bold badge-pulse",
+    active: "bg-blue-50 text-blue-700 font-semibold",
   };
 
-  el.className = `status-badge inline-block px-2 py-0.5 rounded text-xs font-medium ${styles[variant] || styles.idle}`;
+  el.className = `inline-block px-2.5 py-0.5 rounded text-xs transition-colors ${
+    styles[variant] || styles.idle
+  }`;
   el.textContent = text;
 }
 
-/* ---------- Telemetry callback ---------- */
+clearLogBtn.addEventListener("click", () => {
+  logContainer.innerHTML = "";
+});
 
-/** @type {string|null} Track last head pose to only log changes. */
-let lastHeadPose = null;
-let lastVerticalPose = null;
-let lastEyeState = null;
-let lastFacePresent = null;
-let lastMultiFace = null;
-let lastCheating = null;
+/* ---------- Extension Detection & Simulator Setup ---------- */
 
-function onTelemetry(data) {
-  const {
-    facePresent,
-    eyesClosed,
-    headPose,
-    verticalHeadPose,
-    facesCount,
-    multipleFacesAlert,
-    cheating,
-    cheatingReason,
-    awayDuration,
-  } = data;
+function updateExtensionStatus() {
+  const hasRealExtension = Boolean(
+    window.__INVIGILATOR_EXTENSION_ACTIVE__ ||
+    document.body.getAttribute("data-invigilator-extension") === "installed"
+  );
 
-  /* ---- Face Present ---- */
-  if (facePresent) {
-    setBadge(badgeFace, "✓ Detected", "good");
+  if (hasRealExtension) {
+    setBadge(badgeExtensionStatus, "🟢 Real Chrome Extension Detected", "good");
+  } else if (mockExtensionToggle.checked) {
+    setBadge(badgeExtensionStatus, "🟡 Mock Extension Simulator Active", "active");
   } else {
-    setBadge(badgeFace, "✗ No Face", "alert");
-  }
-  if (facePresent !== lastFacePresent) {
-    appendLog(
-      facePresent ? "Face detected" : "Face lost — no face in frame",
-      facePresent ? "good" : "alert",
-    );
-    lastFacePresent = facePresent;
-  }
-
-  /* ---- Head Pose ---- */
-  if (facePresent) {
-    const poseVariant = headPose === "CENTER" ? "good" : "warn";
-    const poseLabel =
-      headPose === "CENTER"
-        ? "↑ Center"
-        : headPose === "TURNED_LEFT"
-          ? "← Turned Left"
-          : "→ Turned Right";
-    setBadge(badgeHead, poseLabel, poseVariant);
-
-    if (headPose !== lastHeadPose) {
-      appendLog(
-        `Head pose → ${headPose}`,
-        headPose === "CENTER" ? "good" : "warn",
-      );
-      lastHeadPose = headPose;
-    }
-  } else {
-    setBadge(badgeHead, "— N/A —", "idle");
-  }
-
-  /* ---- Vertical Pose ---- */
-  if (facePresent) {
-    const vVariant = verticalHeadPose === "CENTER" ? "good" : "warn";
-    const vLabel =
-      verticalHeadPose === "CENTER"
-        ? "— Center"
-        : verticalHeadPose === "LOOKING_UP"
-          ? "↑ Looking Up"
-          : "↓ Looking Down";
-    setBadge(badgeVertical, vLabel, vVariant);
-
-    if (verticalHeadPose !== lastVerticalPose) {
-      appendLog(
-        `Vertical pose → ${verticalHeadPose}`,
-        verticalHeadPose === "CENTER" ? "good" : "warn",
-      );
-      lastVerticalPose = verticalHeadPose;
-    }
-  } else {
-    setBadge(badgeVertical, "— N/A —", "idle");
-  }
-
-  /* ---- Eyes ---- */
-  if (facePresent) {
-    if (eyesClosed) {
-      setBadge(badgeEyes, "✗ Closed", "warn");
-    } else {
-      setBadge(badgeEyes, "✓ Open", "good");
-    }
-    const eyeState = eyesClosed ? "closed" : "open";
-    if (eyeState !== lastEyeState) {
-      appendLog(
-        eyesClosed ? "Eyes closed detected" : "Eyes open",
-        eyesClosed ? "warn" : "good",
-      );
-      lastEyeState = eyeState;
-    }
-  } else {
-    setBadge(badgeEyes, "— N/A —", "idle");
-  }
-
-  /* ---- Multi-Face ---- */
-  if (facesCount > 0) {
-    if (multipleFacesAlert) {
-      setBadge(badgeMultiface, "⚠ ALERT", "alert");
-      videoWrapper.classList.add("alert");
-    } else {
-      setBadge(badgeMultiface, "✓ OK", "good");
-      videoWrapper.classList.remove("alert");
-    }
-    setBadge(badgeCount, String(facesCount), facesCount > 1 ? "warn" : "info");
-
-    if (multipleFacesAlert !== lastMultiFace) {
-      if (multipleFacesAlert) {
-        appendLog(`⚠ MULTIPLE FACES DETECTED (${facesCount})`, "alert");
-      } else if (lastMultiFace !== null) {
-        appendLog("Multi-face alert cleared", "good");
-      }
-      lastMultiFace = multipleFacesAlert;
-    }
-  }
-
-  /* ---- Away Duration ---- */
-  const awaySec = (awayDuration / 1000).toFixed(1);
-  if (awayDuration > 0) {
-    const awayVariant = awayDuration >= 3000 ? "warn" : "info";
-    setBadge(badgeAway, `${awaySec}s`, awayVariant);
-  } else {
-    setBadge(badgeAway, "0s", "good");
-  }
-
-  /* ---- Cheating Flag ---- */
-  if (cheating) {
-    setBadge(badgeCheating, `⚠ CHEATING`, "alert");
-    videoWrapper.classList.add("alert");
-  } else {
-    setBadge(badgeCheating, "✓ Clean", "good");
-    if (!multipleFacesAlert) videoWrapper.classList.remove("alert");
-  }
-  if (cheating !== lastCheating) {
-    if (cheating) {
-      appendLog(`🚨 CHEATING DETECTED — ${cheatingReason}`, "alert");
-    } else if (lastCheating !== null) {
-      appendLog("Cheating flag cleared", "good");
-    }
-    lastCheating = cheating;
+    setBadge(badgeExtensionStatus, "⚪ Not Detected", "idle");
   }
 }
 
-/* ---------- Start ---------- */
+// Enable mock simulator by default so developer testing works out-of-the-box
+mockExtensionToggle.checked = true;
+document.body.setAttribute("data-my-extension", "installed");
+window.__INVIGILATOR_MOCK_EXTENSION__ = true;
+updateExtensionStatus();
 
-startBtn.addEventListener("click", async () => {
-  startBtn.disabled = true;
-  startBtn.textContent = "Initializing…";
-
-  /* 1. Parse runtime config from DOM inputs */
-  const numFacesLimit = parseInt(inputFacesLimit.value, 10) || 1;
-  const fastLoop = parseInt(inputFastLoop.value, 10) || 300;
-  const slowLoop = parseInt(inputSlowLoop.value, 10) || 3000;
-  const awayTimeout = (parseInt(inputAwayTimeout.value, 10) || 5) * 1000; // seconds → ms
-
-  /* Clear log */
-  logContainer.innerHTML = "";
-  appendLog(
-    `Config → faces: ${numFacesLimit}, fast: ${fastLoop}ms, slow: ${slowLoop}ms, away: ${awayTimeout / 1000}s`,
-    "info",
-  );
-
-  /* 2. Request webcam */
-  try {
-    webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
-    videoEl.srcObject = webcamStream;
-    await videoEl.play();
-    appendLog("Webcam stream acquired", "good");
-  } catch (err) {
-    appendLog(`Webcam error: ${err.message}`, "alert");
-    startBtn.disabled = false;
-    startBtn.textContent = "Start Invigilator";
-    return;
+mockExtensionToggle.addEventListener("change", (e) => {
+  if (e.target.checked) {
+    document.body.setAttribute("data-my-extension", "installed");
+    window.__INVIGILATOR_MOCK_EXTENSION__ = true;
+    appendLog("Mock extension simulator activated ✓", "good");
+  } else {
+    document.body.removeAttribute("data-my-extension");
+    window.__INVIGILATOR_MOCK_EXTENSION__ = false;
+    appendLog("Mock extension simulator deactivated", "info");
   }
+  updateExtensionStatus();
+});
 
-  /* 3. Instantiate engine */
-  engine = new InvigilatorEngine(videoEl, canvasEl, onTelemetry, {
-    numFacesLimit,
-    fastLoop,
-    slowLoop,
-    awayTimeout,
+setInterval(updateExtensionStatus, 1500);
+
+/* ---------- SDK Instantiation & Event Handlers ---------- */
+
+function createProctorInstance() {
+  return new Invigilator({
+    mirrored: true,
+    mockExtension: mockExtensionToggle.checked,
+
+    /* 1. Camera Blocked / Dark Room */
+    onCameraBlocked: () => {
+      setBadge(badgeCameraBlocked, "⚠ Blocked / Dark", "alert");
+      videoWrapper.classList.add("alert");
+      appendLog("🚨 Alert: Camera is covered or room is too dark!", "alert");
+    },
+    onCameraBlockedStop: () => {
+      setBadge(badgeCameraBlocked, "✓ Normal", "good");
+      videoWrapper.classList.remove("alert");
+      appendLog("✓ Camera clear / room bright again.", "good");
+    },
+
+    /* 2. No Face Detected */
+    onNoFaceDetected: () => {
+      setBadge(badgeNoFace, "✗ No Face", "alert");
+      videoWrapper.classList.add("alert");
+      appendLog("🚨 Alert: No face detected in camera feed!", "alert");
+    },
+    onNoFaceDetectedStop: () => {
+      setBadge(badgeNoFace, "✓ Detected", "good");
+      videoWrapper.classList.remove("alert");
+      appendLog("✓ Face detected again.", "good");
+    },
+
+    /* 3. Multiple Faces Detected */
+    onMultipleFaceDetected: () => {
+      setBadge(badgeMultiFace, "⚠ Multiple Faces", "alert");
+      videoWrapper.classList.add("alert");
+      appendLog("🚨 Alert: Multiple faces detected!", "alert");
+    },
+    onMultipleFaceDetectedStop: () => {
+      setBadge(badgeMultiFace, "✓ Single Face", "good");
+      videoWrapper.classList.remove("alert");
+      appendLog("✓ Returned to single face.", "good");
+    },
+
+    /* 4. Face Away From Screen */
+    onFaceAwayFromScreen: () => {
+      setBadge(badgeFaceAway, "⚠ Looking Away", "warn");
+      appendLog("⚠ Warning: Face turned away from screen.", "warn");
+    },
+    onFaceAwayFromScreenStop: () => {
+      setBadge(badgeFaceAway, "✓ Centered", "good");
+      appendLog("✓ Face returned to center.", "good");
+    },
+
+    /* 5. Eyeballs Displaced (>5s) */
+    onEyeballsDisplaced: () => {
+      setBadge(badgeEyeballs, "⚠ Gaze Away (>5s)", "warn");
+      appendLog("⚠ Warning: Eyeballs looking away for 5+ seconds!", "warn");
+    },
+    onEyeballsDisplacedStop: () => {
+      setBadge(badgeEyeballs, "✓ Centered", "good");
+      appendLog("✓ Eyeballs back to center.", "good");
+    },
+
+    /* 6. Generic Error Snapshot Handler (delivers JPEG blob) */
+    onFaceError: (message, frameBlob, time) => {
+      snapshotCount++;
+      setBadge(badgeSnapshots, `${snapshotCount} blobs`, "warn");
+      appendLog(
+        `📸 Snapshot captured [${frameBlob.size} bytes] — ${message}`,
+        "alert",
+      );
+    },
+    onFaceErrorStop: (message, frameBlob, time) => {
+      appendLog(`✓ Cleared: ${message}`, "good");
+    },
+
+    /* 7. Multi-Screen & Extension Callbacks */
+    onMultiScreenDetected: (data) => {
+      setBadge(badgeNativeMultiscreen, "⚠ Multi-Screen Detected!", "alert");
+      appendLog(
+        `🖥️ Multi-screen detected (${data.method || "extension"}): ${data.screenCount || 2} displays active!`,
+        "alert",
+      );
+    },
+    onSnapshotTaken: (data) => {
+      appendLog(`📷 OS device snapshot received successfully!`, "good");
+    },
   });
+}
 
-  /* 4. Initialize (waits for worker READY) */
+/* ---------- Start / Stop Proctoring Lifecycle ---------- */
+
+startSdkBtn.addEventListener("click", async () => {
+  startSdkBtn.disabled = true;
+  startSdkBtn.textContent = "Initializing…";
+
   try {
-    appendLog("Loading MediaPipe models in Web Worker…", "info");
-    await engine.initialize();
-    appendLog("Worker ready — models loaded ✓", "good");
+    proctor = createProctorInstance();
+
+    appendLog("Initializing Invigilator SDK…", "info");
+    await proctor.init();
+
+    appendLog("Starting face tracking & loading vision models…", "info");
+    await proctor.startFaceTracking(videoEl, canvasEl);
+
+    // UI Updates
+    videoPlaceholder.classList.add("hidden");
+    setBadge(badgeStream, "Active (Streaming)", "good");
+    appendLog("Proctoring session active ✓", "good");
+
+    startSdkBtn.classList.add("hidden");
+    stopSdkBtn.disabled = false;
   } catch (err) {
-    appendLog(`Engine init error: ${err.message}`, "alert");
-    startBtn.disabled = false;
-    startBtn.textContent = "Start Invigilator";
-    return;
+    appendLog(`Initialization error: ${err.message}`, "alert");
+    startSdkBtn.disabled = false;
+    startSdkBtn.textContent = "▶ Start Proctoring";
   }
-
-  /* 5. Start frame capture */
-  engine.start();
-  appendLog("Invigilator started — proctoring active", "good");
-
-  /* UI state */
-  startBtn.classList.add("hidden");
-  stopBtn.disabled = false;
-
-  /* Lock config inputs */
-  inputFacesLimit.disabled = true;
-  inputFastLoop.disabled = true;
-  inputSlowLoop.disabled = true;
-  inputAwayTimeout.disabled = true;
 });
 
-/* ---------- Stop ---------- */
-
-stopBtn.addEventListener("click", () => {
-  if (engine) {
-    engine.stop();
-    engine = null;
+stopSdkBtn.addEventListener("click", () => {
+  if (proctor) {
+    proctor.stopFacialTracking();
   }
 
-  /* Kill webcam tracks */
-  if (webcamStream) {
-    webcamStream.getTracks().forEach((track) => track.stop());
-    webcamStream = null;
-    videoEl.srcObject = null;
-  }
-
-  appendLog("Exam stopped — engine terminated", "warn");
-
-  /* Reset badges */
+  // Reset Badges
+  setBadge(badgeStream, "Camera Inactive", "idle");
   [
-    badgeFace,
-    badgeHead,
-    badgeVertical,
-    badgeEyes,
-    badgeMultiface,
-    badgeCheating,
-  ].forEach((b) => setBadge(b, "— Idle —", "idle"));
-  setBadge(badgeCount, "—", "idle");
-  setBadge(badgeAway, "0s", "idle");
+    badgeCameraBlocked,
+    badgeNoFace,
+    badgeMultiFace,
+    badgeFaceAway,
+    badgeEyeballs,
+  ].forEach((b) => setBadge(b, "idle", "idle"));
 
-  /* Reset tracking state */
-  lastHeadPose = null;
-  lastVerticalPose = null;
-  lastEyeState = null;
-  lastFacePresent = null;
-  lastMultiFace = null;
-  lastCheating = null;
-
-  /* Remove alert glow */
   videoWrapper.classList.remove("alert");
+  videoPlaceholder.classList.remove("hidden");
 
-  /* UI state */
-  startBtn.classList.remove("hidden");
-  startBtn.disabled = false;
-  startBtn.textContent = "▶ Start Invigilator";
-  stopBtn.disabled = true;
+  startSdkBtn.classList.remove("hidden");
+  startSdkBtn.disabled = false;
+  startSdkBtn.textContent = "▶ Start Proctoring";
+  stopSdkBtn.disabled = true;
 
-  /* Unlock config inputs */
-  inputFacesLimit.disabled = false;
-  inputFastLoop.disabled = false;
-  inputSlowLoop.disabled = false;
-  inputAwayTimeout.disabled = false;
+  appendLog("Proctoring session stopped.", "info");
 });
+
+/* ---------- Browser Monitoring Controls ---------- */
+
+// Fullscreen
+btnEnterFullscreen.addEventListener("click", async () => {
+  if (!proctor) proctor = createProctorInstance();
+  try {
+    await proctor.openFullscreen();
+    appendLog("Fullscreen requested", "good");
+  } catch (err) {
+    appendLog(`Fullscreen error: ${err.message}`, "alert");
+  }
+});
+
+btnExitFullscreen.addEventListener("click", async () => {
+  if (!proctor) proctor = createProctorInstance();
+  try {
+    await proctor.closeFullscreen();
+    appendLog("Exited fullscreen", "info");
+  } catch (err) {
+    appendLog(`Exit fullscreen error: ${err.message}`, "alert");
+  }
+});
+
+document.addEventListener("fullscreenchange", () => {
+  const isFs = Boolean(document.fullscreenElement);
+  setBadge(badgeFullscreen, isFs ? "Fullscreen Active" : "Windowed", isFs ? "active" : "idle");
+  appendLog(`Fullscreen change: ${isFs ? "Entered" : "Exited"}`, isFs ? "good" : "info");
+});
+
+// Copy / Paste Lockdown
+btnDisableClipboard.addEventListener("click", async () => {
+  if (!proctor) proctor = createProctorInstance();
+  await proctor.disableCopyAndPaste();
+  proctor.disableRightClick();
+  setBadge(badgeClipboard, "Locked (Blocked)", "alert");
+  appendLog("🔒 Clipboard copy/cut/paste and right-click disabled", "warn");
+});
+
+btnEnableClipboard.addEventListener("click", async () => {
+  if (!proctor) proctor = createProctorInstance();
+  await proctor.enableCopyAndPaste();
+  proctor.enableRightClick();
+  setBadge(badgeClipboard, "Allowed", "good");
+  appendLog("✓ Clipboard copy/cut/paste and right-click enabled", "good");
+});
+
+// Mouse Out Detection
+const handleMouseOut = () => {
+  mouseOutCount++;
+  setBadge(badgeMouseout, `${mouseOutCount} events`, "warn");
+  appendLog("🚨 Suspicious: Mouse cursor left the browser window!", "warn");
+};
+
+btnStartMouseout.addEventListener("click", () => {
+  if (!proctor) proctor = createProctorInstance();
+  proctor.startMouseOutDetection(handleMouseOut);
+  appendLog("Mouse-out detection started", "info");
+});
+
+btnStopMouseout.addEventListener("click", () => {
+  if (proctor) {
+    proctor.stopMouseOutDetection(handleMouseOut);
+    appendLog("Mouse-out detection stopped", "info");
+  }
+});
+
+// Visibility / Tab Change Detection
+const handleVisibility = () => {
+  if (document.hidden) {
+    visibilityChangeCount++;
+    setBadge(badgeVisibility, `${visibilityChangeCount} switches`, "alert");
+    appendLog("🚨 Violation: Exam tab was hidden or user switched tabs!", "alert");
+  } else {
+    appendLog("Tab returned to focus", "good");
+  }
+};
+
+btnStartVisibility.addEventListener("click", () => {
+  if (!proctor) proctor = createProctorInstance();
+  proctor.startVisibilityChangeDetection(handleVisibility);
+  appendLog("Visibility change / tab switch detection started", "info");
+});
+
+btnStopVisibility.addEventListener("click", () => {
+  if (proctor) {
+    proctor.stopVisibilityChangeDetection(handleVisibility);
+    appendLog("Visibility detection stopped", "info");
+  }
+});
+
+/* ---------- Native Multi-Screen Detection (NO EXTENSION) ---------- */
+
+btnCheckNativeScreen.addEventListener("click", async () => {
+  if (!proctor) proctor = createProctorInstance();
+  appendLog("Checking displays using native W3C Window Management API…", "info");
+  const res = await proctor.checkMultiScreenDetection();
+
+  if (res.isExtended) {
+    setBadge(badgeNativeMultiscreen, `⚠ Multi-Screen (${res.screenCount} screens)`, "alert");
+    appendLog(`🚨 Violation: Multiple displays detected via ${res.method}! Screen count: ${res.screenCount}`, "alert");
+  } else {
+    setBadge(badgeNativeMultiscreen, "✓ Single Screen (OK)", "good");
+    appendLog(`✓ Single monitor confirmed via ${res.method}.`, "good");
+  }
+});
+
+btnMonitorNativeScreen.addEventListener("click", () => {
+  if (!proctor) proctor = createProctorInstance();
+
+  if (!isAutoMonitoringScreens) {
+    isAutoMonitoringScreens = true;
+    btnMonitorNativeScreen.textContent = "Stop Auto-Monitoring";
+    btnMonitorNativeScreen.classList.add("bg-amber-100", "text-amber-800");
+
+    proctor.startMultiScreenMonitoring((res) => {
+      setBadge(badgeNativeMultiscreen, "⚠ Multi-Screen Plugged In!", "alert");
+      appendLog(`🚨 Screen connect event detected! Displays extended via ${res.method}`, "alert");
+    });
+    appendLog("Auto-monitoring screen connect/disconnect events active ✓", "good");
+  } else {
+    isAutoMonitoringScreens = false;
+    btnMonitorNativeScreen.textContent = "Auto-Monitor Plug/Unplug";
+    btnMonitorNativeScreen.classList.remove("bg-amber-100", "text-amber-800");
+    proctor.stopMultiScreenMonitoring();
+    appendLog("Screen auto-monitoring stopped.", "info");
+  }
+});
+
+/* ---------- Extension Bridge Testing & Mock Simulator ---------- */
+
+// Mock extension message responder for local testing
+window.addEventListener("message", (event) => {
+  if (!event.data || typeof event.data !== "object") return;
+  const { type } = event.data;
+
+  // Only simulate if real extension is not active and mock mode is on
+  if (!window.__INVIGILATOR_EXTENSION_ACTIVE__ && mockExtensionToggle.checked) {
+    if (type === "CHECK_MULTI_SCREEN") {
+      setTimeout(() => {
+        window.postMessage(
+          {
+            type: "MULTI_SCREEN_DETECTED",
+            data: { screenCount: 2, displays: ["Built-in Display", "External HDMI Monitor"] },
+          },
+          "*",
+        );
+      }, 150);
+    } else if (type === "TAKE_SNAPSHOT") {
+      setTimeout(() => {
+        window.postMessage(
+          {
+            type: "SNAPSHOT_TAKEN",
+            data: { timestamp: Date.now(), status: "captured" },
+          },
+          "*",
+        );
+      }, 150);
+    } else if (
+      [
+        "CLOSE_TABS",
+        "ENABLE_LOCKDOWN",
+        "DISABLE_EXTERNAL_DEVICES",
+        "STOP_BACKGROUND_APPS",
+        "DISABLE_RIGHT_CLICK_CLIPBOARD",
+      ].includes(type)
+    ) {
+      appendLog(`[Mock Extension] Handled command: ${type}`, "good");
+    }
+  }
+});
+
+function wrapExtensionAction(name, action) {
+  if (!proctor) proctor = createProctorInstance();
+  try {
+    action();
+    appendLog(`Extension bridge dispatched: ${name}`, "info");
+  } catch (err) {
+    appendLog(`Extension error: ${err.message}`, "alert");
+  }
+}
+
+btnCloseTabs.addEventListener("click", () =>
+  wrapExtensionAction("closeOtherTabs()", () => proctor.closeOtherTabs()),
+);
+btnLockdown.addEventListener("click", () =>
+  wrapExtensionAction("enableLockdownMode()", () => proctor.enableLockdownMode()),
+);
+btnMultiscreen.addEventListener("click", () =>
+  wrapExtensionAction("checkMultiScreenDetection()", () =>
+    proctor.checkMultiScreenDetection(),
+  ),
+);
+btnSnapshot.addEventListener("click", () =>
+  wrapExtensionAction("takeDeviceSnapshot()", () => proctor.takeDeviceSnapshot()),
+);
+btnDisableDevices.addEventListener("click", () =>
+  wrapExtensionAction("disableExternalDevices()", () =>
+    proctor.disableExternalDevices(),
+  ),
+);
+btnStopApps.addEventListener("click", () =>
+  wrapExtensionAction("stopBackgroundApps()", () => proctor.stopBackgroundApps()),
+);

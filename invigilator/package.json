@@ -1,10 +1,31 @@
 {
   "name": "invigilator",
-  "version": "1.0.0",
-  "description": "Client-side proctoring SDK using Web Workers and MediaPipe",
+  "version": "1.2.0",
+  "description": "Client-side AI proctoring, real-time face tracking, and browser monitoring SDK",
   "type": "module",
   "main": "src/index.js",
-  "keywords": ["proctoring", "webrtc", "tensorflow", "mediapipe", "education", "onlineExam"],
+  "types": "types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "types": "./types/index.d.ts"
+    }
+  },
+  "files": [
+    "src",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "proctoring",
+    "browser-monitoring",
+    "webrtc",
+    "mediapipe",
+    "lockdown",
+    "education",
+    "onlineExam"
+  ],
   "author": "Vishwahiremath",
   "license": "MIT"
 }
